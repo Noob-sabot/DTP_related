@@ -1,0 +1,31 @@
+{
+  "portalUrl": "https://portal.entitysolutions.com.au/webcenter/portal/login",
+  "timesheetPath": "/webcenter/portal/IPro/pages_home/mytimesheets/submittimesheet",
+  "contractAssignment": "CRREW_LOGAN_464459",
+  "organisation": "Department of Transport and Planning",
+  "defaults": {
+    "startTime": "09:00",
+    "endTime": "17:00",
+    "breakTime": "00:30",
+    "expectedHours": 7.5,
+    "rate": "Consulting Fee",
+    "workDays": ["Tuesday", "Wednesday", "Thursday", "Friday"]
+  },
+  "fields": {
+    "rate": "Consulting Fee",
+    "startTimeField": "startTime",
+    "endTimeField": "endTime",
+    "breakTimeField": "nonWorkedTime",
+    "descriptionField": "description"
+  },
+  "notes": [
+    "User always handles login and Gmail 6-digit OTP manually.",
+    "Times use 24-hour hh:mm format.",
+    "After filling start/end/break, click the Description field to trigger hour recalculation before OK.",
+    "On the period screen: select contract assignment, select current week period, click Next.",
+    "On the week grid: click Edit for each day, fill row, click OK.",
+    "Click Save on the week grid but never Submit for Approval unless user explicitly asks.",
+    "Skip days with no work (public holidays, leave) — leave at 0 or clear via Edit with 00:00 times.",
+    "Element refs change each snapshot; find fields by accessibility name (startTime, endTime, nonWorkedTime)."
+  ]
+}
