@@ -1,34 +1,54 @@
 # Entity Solutions Timesheet Automation
 
-Cursor agent skill and config for filling weekly timesheets on the [People2.0 / Entity Solutions APAC portal](https://portal.entitysolutions.com.au/webcenter/portal/login).
+Playwright scripts for filling weekly timesheets on the [People2.0 / Entity Solutions APAC portal](https://portal.entitysolutions.com.au/webcenter/portal/login).
 
-## Weekly defaults
+## Setup
 
-| Day | Hours |
-|-----|-------|
-| Monday (if worked) | 7.5 (09:00–17:00, 30 min break) |
-| Tuesday–Friday | 7.5 each |
-| Weekend | 0 |
+```bash
+npm install
+npx playwright install chromium
+```
 
-Skip days with no work (public holidays, leave) — leave at 0.
+## First-time auth
 
-## Usage
+```bash
+npm run auth
+```
 
-1. Open Cursor Agent chat in this project.
-2. Say: **"Fill my Entity Solutions timesheet for this week."**
-3. Log in and complete Gmail OTP in the embedded browser.
-4. Agent fills from [`timesheet-config.json`](timesheet-config.json) using [`.cursor/skills/timesheet/SKILL.md`](.cursor/skills/timesheet/SKILL.md).
-5. Review in the browser, then submit when ready.
+Log in and complete Gmail OTP in the opened browser, then click **Resume** in the Playwright inspector. Session is saved to `auth-state.json` (not committed).
 
-Shortcut if already logged in:
+## Fill this week
 
-> I'm on the timesheet page — fill Tue–Fri, don't submit.
+Edit [`timesheet-config.json`](timesheet-config.json) `currentWeek`, then:
+
+```bash
+npm run fill -- --headed
+```
+
+Review in the browser. Submit manually on the portal, or:
+
+```bash
+npm run fill -- --submit
+```
+
+## Current week example (15/06/2026 – 21/06/2026)
+
+| Day | Hours | Note |
+|-----|-------|------|
+| Mon | 5 | Some time taken off as child was in hospital |
+| Tue | 5 | Same |
+| Wed–Thu | 7.5 | Normal |
+| Fri | 7.5 | Thankyou, have a good weekend :) |
+| Sat/Sun | 0 | — |
 
 ## Files
 
-- `timesheet-config.json` — portal URL, contract assignment, default times
-- `.cursor/skills/timesheet/SKILL.md` — agent instructions (login, fill flow, never auto-submit unless asked)
+- `timesheet-config.json` — portal settings + `currentWeek` day definitions
+- `scripts/fill-timesheet.ts` — main fill script
+- `scripts/auth.ts` — manual login + save session
+- `.cursor/skills/timesheet/SKILL.md` — Cursor agent instructions
+- `api-capture/portal-analysis.md` — ADF network analysis (reference)
 
 ## Security
 
-No credentials are stored. You always handle login and 2FA yourself.
+No credentials in the repo. Login and 2FA are always manual via `npm run auth`.

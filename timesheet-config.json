@@ -18,14 +18,50 @@
     "breakTimeField": "nonWorkedTime",
     "descriptionField": "description"
   },
+  "currentWeek": {
+    "periodMatch": "15/06/2026 21/06/2026",
+    "days": [
+      {
+        "hours": 5,
+        "start": "09:00",
+        "end": "14:30",
+        "break": "00:30",
+        "note": "Some time taken off as child was in hospital"
+      },
+      {
+        "hours": 5,
+        "start": "09:00",
+        "end": "14:30",
+        "break": "00:30",
+        "note": "Some time taken off as child was in hospital"
+      },
+      {
+        "hours": 7.5,
+        "start": "09:00",
+        "end": "17:00",
+        "break": "00:30"
+      },
+      {
+        "hours": 7.5,
+        "start": "09:00",
+        "end": "17:00",
+        "break": "00:30"
+      },
+      {
+        "hours": 7.5,
+        "start": "09:00",
+        "end": "17:00",
+        "break": "00:30",
+        "note": "Thankyou, have a good weekend :)"
+      },
+      { "hours": 0 },
+      { "hours": 0 }
+    ]
+  },
   "notes": [
-    "User always handles login and Gmail 6-digit OTP manually.",
+    "User handles login and Gmail OTP via: npm run auth",
+    "Fill timesheet via: npm run fill (add --headed to watch, --submit to submit)",
     "Times use 24-hour hh:mm format.",
-    "After filling start/end/break, click the Description field to trigger hour recalculation before OK.",
-    "On the period screen: select contract assignment, select current week period, click Next.",
-    "On the week grid: click Edit for each day, fill row, click OK.",
-    "Click Save on the week grid but never Submit for Approval unless user explicitly asks.",
-    "Skip days with no work (public holidays, leave) — leave at 0 or clear via Edit with 00:00 times.",
-    "Element refs change each snapshot; find fields by accessibility name (startTime, endTime, nonWorkedTime)."
+    "After filling start/end/break, focus description to trigger hour recalculation before OK."
   ]
 }

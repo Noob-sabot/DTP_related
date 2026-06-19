@@ -1,0 +1,4 @@
+auth-state.json
+storageState.json
+*.har
+network-log.jsonl
