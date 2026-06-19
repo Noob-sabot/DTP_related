@@ -18,31 +18,65 @@ export async function navigateToWeekGrid(
 ): Promise<void> {
   await dismissInfoDialog(page);
 
-  const contract = page.getByRole("combobox", { name: /Contract Assignment/i });
-  if (await contract.isVisible({ timeout: 3000 }).catch(() => false)) {
-    const value = await contract.inputValue();
-    if (!value.includes(contractAssignment)) {
-      throw new Error(`Expected contract ${contractAssignment}, got ${value}`);
-    }
-
-    const periodSelect = page.getByRole("combobox", {
-      name: /Select Timesheet Period/i,
-    });
-    const options = await periodSelect.locator("option").allTextContents();
-    const matchIdx = options.findIndex((o) => o.includes(periodMatch));
-    if (matchIdx < 0) {
-      throw new Error(
-        `Period "${periodMatch}" not found. Options: ${options.join(", ")}`
-      );
-    }
-    await periodSelect.selectOption({ index: matchIdx });
-    await page.getByRole("button", { name: "Next" }).click();
-    await page.waitForTimeout(2000);
+  const editButtons = page.getByRole("button", { name: "Edit" });
+  if (await editButtons.first().isVisible({ timeout: 2000 }).catch(() => false)) {
+    return;
   }
 
-  await page.getByRole("button", { name: "Edit" }).first().waitFor({
+  const combos = page.getByRole("combobox");
+  const contract = combos.first();
+  await contract.waitFor({ timeout: 10000 });
+
+  const contractText =
+    (await contract.locator("option:checked").textContent())?.trim() ?? "";
+  if (!contractText.includes(contractAssignment)) {
+    throw new Error(
+      `Expected contract ${contractAssignment}, got ${contractText || "(empty)"}`
+    );
+  }
+
+  const periodSelect = combos.nth(1);
+  const options = await periodSelect.locator("option").allTextContents();
+  const matchIdx = options.findIndex((o) => o.includes(periodMatch));
+  if (matchIdx < 0) {
+    throw new Error(
+      `Period "${periodMatch}" not found. Options: ${options.join(", ")}`
+    );
+  }
+  await periodSelect.selectOption({ index: matchIdx });
+  await page.getByRole("button", { name: "Next" }).click();
+  await page.waitForTimeout(2000);
+
+  await editButtons.first().waitFor({
     timeout: 15000,
   });
+}
+
+async function setTimeField(
+  page: Page,
+  name: string,
+  value: string
+): Promise<void> {
+  const field = page.getByRole("textbox", { name });
+  await field.click();
+  await field.press("ControlOrMeta+a");
+  await field.press("Backspace");
+  await field.fill(value);
+  await page.waitForTimeout(400);
+}
+
+async function waitForHours(page: Page, expected: number): Promise<void> {
+  const hours = page.getByRole("textbox", { name: "hours" });
+  const targets = new Set([String(expected), `${expected}.0`]);
+
+  for (let i = 0; i < 30; i++) {
+    const val = await hours.inputValue();
+    if (targets.has(val)) return;
+    await page.waitForTimeout(200);
+  }
+
+  const val = await hours.inputValue();
+  throw new Error(`Hours not recalculated: expected ${expected}, got ${val}`);
 }
 
 async function fillDayDetail(
@@ -57,19 +91,42 @@ async function fillDayDetail(
     timeout: 10000,
   });
 
+  const rate = page.getByRole("combobox").first();
+  if (await rate.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await rate.selectOption({ label: "Consulting Fee" });
+    await page.waitForTimeout(300);
+  }
+
   if (day.hours === 0) {
-    await page.getByRole("textbox", { name: "startTime" }).fill("00:00");
-    await page.getByRole("textbox", { name: "endTime" }).fill("00:00");
-    await page.getByRole("textbox", { name: "nonWorkedTime" }).fill("00:00");
+    await setTimeField(page, "startTime", "00:00");
+    await setTimeField(page, "endTime", "00:00");
+    await setTimeField(page, "nonWorkedTime", "00:00");
+    const desc = page.getByRole("textbox", { name: "description" });
+    await desc.click();
+    await desc.press("ControlOrMeta+a");
+    await desc.fill("");
   } else {
-    await page.getByRole("textbox", { name: "startTime" }).fill(day.start!);
-    await page.getByRole("textbox", { name: "endTime" }).fill(day.end!);
-    await page.getByRole("textbox", { name: "nonWorkedTime" }).fill(day.break!);
+    // Fill end before start when recovering from zeroed 09:00–00:00 rows.
+    await setTimeField(page, "endTime", day.end!);
+    await setTimeField(page, "startTime", day.start!);
+    await setTimeField(page, "nonWorkedTime", day.break!);
+
     const desc = page.getByRole("textbox", { name: "description" });
     if (day.note) {
+      await desc.click();
+      await desc.press("ControlOrMeta+a");
       await desc.fill(day.note);
     } else {
       await desc.click();
+    }
+
+    await waitForHours(page, day.hours);
+
+    const endVal = await page.getByRole("textbox", { name: "endTime" }).inputValue();
+    if (endVal !== day.end) {
+      throw new Error(
+        `${DAY_NAMES[dayIndex]} endTime mismatch before OK: expected ${day.end}, got ${endVal}`
+      );
     }
   }
 
@@ -129,11 +186,24 @@ export async function verifyWeekGrid(
   page: Page,
   days: DayEntry[]
 ): Promise<void> {
-  const inputs = page.locator('input[disabled][readonly]');
-  const count = await inputs.count();
+  const gridHours = page.locator(
+    'input[readonly]:not([name="timeWorked"]):not([name="hours"])'
+  );
+  const editCount = await page.getByRole("button", { name: "Edit" }).count();
   const hourFields: string[] = [];
-  for (let i = 0; i < Math.min(count, 7); i++) {
-    hourFields.push(await inputs.nth(i).inputValue());
+
+  for (let i = 0; i < editCount; i++) {
+    const edit = page.getByRole("button", { name: "Edit" }).nth(i);
+    const hourInput = edit.locator("xpath=preceding::input[@readonly][1]");
+    hourFields.push(await hourInput.inputValue().catch(() => "?"));
+  }
+
+  if (hourFields.length === 0) {
+    const readonly = page.getByRole("textbox", { disabled: true });
+    const count = await readonly.count();
+    for (let i = 0; i < Math.min(count, 7); i++) {
+      hourFields.push(await readonly.nth(i).inputValue());
+    }
   }
 
   console.log("Week grid:", hourFields.join(" | "));

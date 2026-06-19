@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "auth": "tsx scripts/auth.ts",
-    "fill": "tsx scripts/fill-timesheet.ts"
+    "auth": "env -u PLAYWRIGHT_BROWSERS_PATH tsx scripts/auth.ts",
+    "fill": "env -u PLAYWRIGHT_BROWSERS_PATH tsx scripts/fill-timesheet.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",

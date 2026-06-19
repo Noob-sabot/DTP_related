@@ -27,8 +27,13 @@ async function main() {
 
   await page.goto(getTimesheetUrl(config));
 
-  const loginField = page.getByRole("textbox", { name: /Username/i });
-  if (await loginField.isVisible({ timeout: 3000 }).catch(() => false)) {
+  const onLoginPage =
+    page.url().includes("/login") ||
+    (await page
+      .getByRole("button", { name: "Login" })
+      .isVisible({ timeout: 5000 })
+      .catch(() => false));
+  if (onLoginPage) {
     console.error("Session expired. Run: npm run auth");
     await browser.close();
     process.exit(1);
