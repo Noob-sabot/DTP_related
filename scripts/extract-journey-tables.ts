@@ -20,8 +20,66 @@ function parseArgs(argv: string[]) {
   return {
     name: getValue("--name"),
     list: argv.includes("--list"),
+    all: argv.includes("--all"),
     format: getValue("--format") ?? "tsv",
   };
+}
+
+function extractSection(
+  section: FigmaNode,
+  mapName: string,
+  outputDir: string,
+  format: string
+): { gridPath: string; flatPath: string; manifestPath: string } {
+  const baseName = slugify(mapName);
+  const mapDir = join(outputDir, baseName);
+  mkdirSync(mapDir, { recursive: true });
+
+  const bounds = section.absoluteBoundingBox!;
+  const textCells = collectTextCells(section, bounds);
+
+  const nativeTables: FigmaNode[] = [];
+  walkNodes(section, (node) => {
+    if (node.type === "TABLE") nativeTables.push(node);
+  });
+
+  const serialize = format === "csv" ? gridToCsv : gridToTsv;
+  const ext = format;
+
+  if (nativeTables.length > 0) {
+    nativeTables.forEach((table, i) => {
+      const grid = exportTableNode(table);
+      writeFileSync(join(mapDir, `table-${i + 1}.${ext}`), serialize(grid));
+    });
+  }
+
+  const grid = cellsToGrid(textCells);
+  const gridPath = join(mapDir, `journey-grid.${ext}`);
+  writeFileSync(gridPath, serialize(grid));
+
+  const flatPath = join(mapDir, `cells-flat.${ext}`);
+  writeFileSync(flatPath, serialize(cellsToFlatTable(textCells)));
+
+  const manifestPath = join(mapDir, "manifest.json");
+  writeFileSync(
+    manifestPath,
+    JSON.stringify(
+      {
+        mapName: section.name,
+        sectionId: section.id,
+        textCellCount: textCells.length,
+        gridRows: grid.length,
+        gridCols: grid[0]?.length ?? 0,
+        nativeTables: nativeTables.length,
+        files: { gridPath, flatPath },
+        extractedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    )
+  );
+
+  return { gridPath, flatPath, manifestPath };
 }
 
 async function main() {
@@ -29,7 +87,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const outputDir = resolveOutputDir(config);
 
-  console.log("Fetching FigJam file from Figma API...");
+  console.log("Loading FigJam file...");
   const file = await fetchFigmaFile();
   const sections = findSections(file.document);
 
@@ -38,6 +96,23 @@ async function main() {
     for (const s of sections) {
       console.log(`  - ${s.name} (id: ${s.id})`);
     }
+    return;
+  }
+
+  const format = args.format === "csv" ? "csv" : "tsv";
+
+  if (args.all) {
+    console.log(`Extracting ${sections.length} sections...\n`);
+    for (const section of sections) {
+      if (!section.absoluteBoundingBox) {
+        console.warn(`  Skip "${section.name}" — no bounding box`);
+        continue;
+      }
+      console.log(`Extracting: "${section.name}"`);
+      const { gridPath } = extractSection(section, section.name, outputDir, format);
+      console.log(`  → ${gridPath}\n`);
+    }
+    console.log(`Done. Output folder:\n  ${outputDir}`);
     return;
   }
 
@@ -54,53 +129,7 @@ async function main() {
   }
 
   console.log(`Extracting: "${section.name}" (${section.id})`);
-  const baseName = slugify(mapName);
-  const mapDir = join(outputDir, baseName);
-  mkdirSync(mapDir, { recursive: true });
-
-  const bounds = section.absoluteBoundingBox;
-  const textCells = collectTextCells(section, bounds);
-  console.log(`  Found ${textCells.length} text cells`);
-
-  const nativeTables: FigmaNode[] = [];
-  walkNodes(section, (node) => {
-    if (node.type === "TABLE") nativeTables.push(node);
-  });
-
-  const format = args.format === "csv" ? "csv" : "tsv";
-  const serialize = format === "csv" ? gridToCsv : gridToTsv;
-  const ext = format;
-
-  if (nativeTables.length > 0) {
-    console.log(`  Found ${nativeTables.length} native FigJam TABLE node(s)`);
-    nativeTables.forEach((table, i) => {
-      const grid = exportTableNode(table);
-      const path = join(mapDir, `table-${i + 1}.${ext}`);
-      writeFileSync(path, serialize(grid));
-      console.log(`  Wrote ${path} (${grid.length} rows)`);
-    });
-  }
-
-  const grid = cellsToGrid(textCells);
-  const gridPath = join(mapDir, `journey-grid.${ext}`);
-  writeFileSync(gridPath, serialize(grid));
-  console.log(`  Wrote ${gridPath} (${grid.length} rows × ${grid[0]?.length ?? 0} cols)`);
-
-  const flatPath = join(mapDir, `cells-flat.${ext}`);
-  writeFileSync(flatPath, serialize(cellsToFlatTable(textCells)));
-
-  const manifest = {
-    mapName: section.name,
-    sectionId: section.id,
-    textCellCount: textCells.length,
-    gridRows: grid.length,
-    gridCols: grid[0]?.length ?? 0,
-    nativeTables: nativeTables.length,
-    files: { gridPath, flatPath },
-    extractedAt: new Date().toISOString(),
-  };
-  writeFileSync(join(mapDir, "manifest.json"), JSON.stringify(manifest, null, 2));
-
+  const { gridPath } = extractSection(section, mapName, outputDir, format);
   console.log(`\nDone. Open in Excel:\n  ${gridPath}`);
   console.log("Tip: TSV pastes cleanly into Excel (one tab per cell).");
 }

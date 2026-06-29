@@ -7,5 +7,11 @@
   "panSettleMs": 400,
   "defaultZoom": 200,
   "pilotMapName": "Metro & town bus",
-  "pilotSearchTerm": "METRO & TOWN BUS"
+  "pilotSearchTerm": "METRO & TOWN BUS",
+  "maps": [
+    "METRO TRAM",
+    "METRO & TOWN BUS",
+    "V/LINE TRAIN",
+    "V/LINE COACH"
+  ]
 }

@@ -21,22 +21,21 @@ export interface FigmaFileResponse {
   document: FigmaNode;
 }
 
-function getToken(): string {
-  const token = process.env.FIGMA_TOKEN;
+export async function fetchFigmaFile(fileKey: string = FIGMA_FILE_KEY): Promise<FigmaFileResponse> {
+  const token = process.env.FIGMA_TOKEN?.trim();
   if (!token) {
     console.error(
-      "FIGMA_TOKEN is required for table extraction.\n" +
-        "Create a read-only personal access token at https://www.figma.com/developers/api#access-tokens\n" +
-        "Add to .env: FIGMA_TOKEN=figd_..."
+      "FIGMA_TOKEN is required.\n\n" +
+        "1. Log in at https://www.figma.com\n" +
+        "2. Open Settings → Security → Personal access tokens\n" +
+        "3. Generate a token with file read access\n" +
+        "4. Add to .env: FIGMA_TOKEN=figd_...\n"
     );
     process.exit(1);
   }
-  return token;
-}
 
-export async function fetchFigmaFile(fileKey: string = FIGMA_FILE_KEY): Promise<FigmaFileResponse> {
   const res = await fetch(`https://api.figma.com/v1/files/${fileKey}`, {
-    headers: { "X-Figma-Token": getToken() },
+    headers: { "X-Figma-Token": token },
   });
   if (!res.ok) {
     const body = await res.text();

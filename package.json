@@ -7,9 +7,14 @@
     "auth": "env -u PLAYWRIGHT_BROWSERS_PATH tsx scripts/auth.ts",
     "fill": "env -u PLAYWRIGHT_BROWSERS_PATH tsx scripts/fill-timesheet.ts",
     "figma-auth": "env -u PLAYWRIGHT_BROWSERS_PATH tsx scripts/figma-auth.ts",
-    "capture:journey-map": "env -u PLAYWRIGHT_BROWSERS_PATH tsx scripts/capture-journey-map.ts",
+    "capture:journey-map": "tsx scripts/capture-journey-map.ts",
+    "capture:journey-maps": "tsx scripts/capture-journey-map.ts --all && open exports/dtp-accessibility-journey-maps",
+    "capture:ocr": "tsx scripts/capture-map-ocr.ts",
+    "validate:ocr": "tsx scripts/validate-ocr-screenshot.ts",
     "extract:journey-tables": "tsx scripts/extract-journey-tables.ts",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "extract:journey-tables:all": "tsx scripts/extract-journey-tables.ts --all && open exports/dtp-accessibility-journey-maps",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:e2e": "FIGJAM_E2E=1 node --import tsx --test tests/e2e/*.test.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
@@ -20,6 +25,7 @@
   },
   "dependencies": {
     "pdf-lib": "^1.17.1",
-    "sharp": "^0.35.2"
+    "sharp": "^0.35.2",
+    "tesseract.js": "^7.0.0"
   }
 }

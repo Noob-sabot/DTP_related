@@ -6,4 +6,5 @@ figma-auth-state.json
 playwright-report/
 test-results/
 exports/dtp-accessibility-journey-maps/*-tiles/
-exports/debug-figma.png
+eng.traineddata
+tests/.tmp-journey-map/

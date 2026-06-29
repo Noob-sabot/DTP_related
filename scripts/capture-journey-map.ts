@@ -1,150 +1,106 @@
-import { writeFileSync, mkdirSync } from "fs";
+import { chromium } from "@playwright/test";
+import { mkdirSync } from "fs";
 import { join } from "path";
-import {
-  loadFigJamConfig,
-  resolveOutputDir,
-  getFigmaAuthState,
-  slugify,
-  parseCaptureArgs,
-} from "./lib/figjam-config.js";
-import {
-  launchFigmaBrowser,
-  openBoard,
-  findAndSelectMap,
-  zoomToSelection,
-  setZoomPercent,
-  getCanvasRegion,
-  setupHighDpiCapture,
-  computeTileGrid,
-  estimateSelectionSize,
-  captureTileGrid,
-  captureSingleFrame,
-} from "./lib/figjam-capture.js";
-import { stitchTiles } from "./lib/stitch-tiles.js";
-import { writeExportArtifacts, writeTileDebug } from "./lib/figjam-export.js";
+import { loadFigJamConfig, resolveOutputDir, slugify } from "./lib/figjam-config.js";
+
+const MAPS = [
+  "METRO TRAM",
+  "METRO & TOWN BUS",
+  "V/LINE TRAIN",
+  "V/LINE COACH",
+  "CPV (Taxi & Uber)",
+  "REGIONAL BUS",
+  "REGIONAL TRAIN",
+  "TRAM",
+  "INTERSTATE COACH",
+  "INTERSTATE TRAIN",
+  "FLEX RIDE",
+  "ON DEMAND",
+];
+
+function parseArgs(argv: string[]) {
+  return {
+    name: argv.find((a, i) => argv[i - 1] === "--name"),
+    all: argv.includes("--all"),
+    list: argv.includes("--list"),
+  };
+}
+
+async function dismissBanners(page: import("@playwright/test").Page): Promise<void> {
+  for (const label of ["Close", "Got it", "OK", "Continue", "Dismiss"]) {
+    const btn = page.getByRole("button", { name: label });
+    if (await btn.first().isVisible({ timeout: 500 }).catch(() => false)) {
+      await btn.first().click().catch(() => {});
+    }
+  }
+}
+
+async function searchMap(page: import("@playwright/test").Page, term: string): Promise<void> {
+  await page.keyboard.press("Meta+f");
+  await page.waitForTimeout(400);
+  const input = page.locator('input[placeholder*="Search" i], input[type="search"]').first();
+  if (await input.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await input.fill(term);
+    await page.waitForTimeout(600);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(1200);
+  }
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Shift+1");
+  await page.waitForTimeout(1500);
+}
+
+async function screenshotCanvas(page: import("@playwright/test").Page, outputPath: string): Promise<void> {
+  const canvas = page.locator("canvas").first();
+  await canvas.waitFor({ state: "visible", timeout: 30_000 });
+  await canvas.screenshot({ path: outputPath });
+}
+
+async function captureOne(
+  page: import("@playwright/test").Page,
+  boardUrl: string,
+  searchTerm: string,
+  outputPath: string
+): Promise<void> {
+  await page.goto(boardUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await page.waitForTimeout(3000);
+  await dismissBanners(page);
+  await searchMap(page, searchTerm);
+  await screenshotCanvas(page, outputPath);
+}
 
 async function main() {
   const config = loadFigJamConfig();
-  const args = parseCaptureArgs(process.argv.slice(2));
-  const mapName = args.name ?? config.pilotMapName;
-  const nodeId = args.noNodeId ? undefined : args.nodeId;
-  const zoom = args.zoom ?? config.defaultZoom;
-  const deviceScale = args.deviceScale ?? config.deviceScaleFactor;
+  const args = parseArgs(process.argv.slice(2));
   const outputDir = resolveOutputDir(config);
-  const baseName = slugify(mapName);
+  mkdirSync(outputDir, { recursive: true });
 
-  const authPath = getFigmaAuthState();
+  if (args.list) {
+    console.log(MAPS.map((m) => `  - ${m}`).join("\n"));
+    return;
+  }
 
-  console.log(`Capturing journey map: "${mapName}"`);
-  console.log(`  zoom=${zoom}%  deviceScale=${deviceScale}  output=${outputDir}`);
-  if (!authPath) console.log("  (public board — no Figma login session)");
+  const terms = args.all ? MAPS : [config.pilotSearchTerm ?? args.name ?? config.pilotMapName.toUpperCase()];
 
-  const { browser, page } = await launchFigmaBrowser(args.headed, authPath);
+  const browser = await chromium.launch({ headless: false });
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
 
   try {
-    await openBoard(page, config.boardUrl, nodeId);
-
-    await findAndSelectMap(page, config.pilotSearchTerm ?? mapName);
-    await zoomToSelection(page);
-    await page.waitForTimeout(1000);
-    if (zoom !== 100) await setZoomPercent(page, zoom);
-
-    const region = await getCanvasRegion(page);
-    console.log(`Canvas region: ${region.width}x${region.height} at (${region.x}, ${region.y})`);
-
-    const selectionOverride =
-      args.selectionWidth && args.selectionHeight
-        ? { width: args.selectionWidth, height: args.selectionHeight }
-        : args.singleFrame || nodeId
-          ? { width: region.width, height: region.height }
-          : undefined;
-
-    const selectionSize = estimateSelectionSize(
-      region.width,
-      region.height,
-      zoom,
-      selectionOverride
-    );
-
-    let { cols, rows } = computeTileGrid(
-      selectionSize.width,
-      selectionSize.height,
-      region.width,
-      region.height,
-      config.tileOverlapPx
-    );
-
-    if (args.singleFrame) {
-      cols = 1;
-      rows = 1;
+    for (const term of terms) {
+      const fileName = `${slugify(term)}.png`;
+      const outputPath = join(outputDir, fileName);
+      console.log(`Screenshot: ${term} → ${outputPath}`);
+      await captureOne(page, config.boardUrl, term, outputPath);
     }
-
-    console.log(`Estimated selection: ${selectionSize.width}x${selectionSize.height} CSS px`);
-    console.log(`Tile grid: ${cols} cols x ${rows} rows (${cols * rows} tiles)`);
-
-    if (args.dryRun) {
-      console.log("Dry run complete — no screenshots taken.");
-      if (args.pause) await page.pause();
-      return;
-    }
-
-    const client = await setupHighDpiCapture(page, deviceScale, config.viewport);
-
-    let imageBuffer: Buffer;
-
-    if (cols === 1 && rows === 1) {
-      console.log("Single-frame capture (fits in viewport)...");
-      imageBuffer = await captureSingleFrame(page, client, region);
-    } else {
-      console.log(`Tiled capture: ${cols}x${rows}...`);
-      const { tiles, tileWidth, tileHeight } = await captureTileGrid(page, client, {
-        region,
-        deviceScaleFactor: deviceScale,
-        tileOverlapPx: config.tileOverlapPx,
-        panSettleMs: config.panSettleMs,
-        cols,
-        rows,
-      });
-
-      if (args.tilesOnly) {
-        mkdirSync(outputDir, { recursive: true });
-        writeTileDebug(outputDir, tiles, baseName);
-        console.log("Tiles-only mode — skipping stitch.");
-        return;
-      }
-
-      const grid = tiles.map((row, ri) =>
-        row.map((buf, ci) => ({ buffer: buf, col: ci, row: ri }))
-      );
-      imageBuffer = await stitchTiles(grid, tileWidth, tileHeight, {
-        overlapPx: config.tileOverlapPx,
-        deviceScaleFactor: deviceScale,
-      });
-    }
-
-    const artifacts = await writeExportArtifacts(outputDir, baseName, imageBuffer);
-
-    const manifest = {
-      mapName,
-      zoom,
-      deviceScale,
-      tileGrid: { cols, rows },
-      selectionEstimate: selectionSize,
-      ...artifacts,
-      capturedAt: new Date().toISOString(),
-    };
-    writeFileSync(join(outputDir, `${baseName}-manifest.json`), JSON.stringify(manifest, null, 2));
-
-    console.log("\nExport complete:");
-    console.log(`  PNG: ${artifacts.pngPath} (${artifacts.width}x${artifacts.height})`);
-    console.log(`  SVG: ${artifacts.svgPath}`);
-    console.log(`  PDF: ${artifacts.pdfPath}`);
+    console.log(`\nDone. ${terms.length} screenshot(s) in ${outputDir}`);
   } finally {
     await browser.close();
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
