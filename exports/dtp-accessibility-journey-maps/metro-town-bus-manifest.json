@@ -1,0 +1,19 @@
+{
+  "mapName": "Metro & town bus",
+  "zoom": 100,
+  "deviceScale": 4,
+  "tileGrid": {
+    "cols": 1,
+    "rows": 1
+  },
+  "selectionEstimate": {
+    "width": 1920,
+    "height": 1080
+  },
+  "pngPath": "/workspace/exports/dtp-accessibility-journey-maps/metro-town-bus.png",
+  "svgPath": "/workspace/exports/dtp-accessibility-journey-maps/metro-town-bus.svg",
+  "pdfPath": "/workspace/exports/dtp-accessibility-journey-maps/metro-town-bus.pdf",
+  "width": 7680,
+  "height": 4320,
+  "capturedAt": "2026-06-29T20:24:49.684Z"
+}

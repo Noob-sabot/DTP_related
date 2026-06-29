@@ -5,9 +5,5 @@ figma-auth-state.json
 .env
 playwright-report/
 test-results/
-exports/dtp-accessibility-journey-maps/*.png
-exports/dtp-accessibility-journey-maps/*.pdf
-exports/dtp-accessibility-journey-maps/*.svg
-exports/dtp-accessibility-journey-maps/*-manifest.json
 exports/dtp-accessibility-journey-maps/*-tiles/
 exports/debug-figma.png
