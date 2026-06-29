@@ -8,6 +8,7 @@
     "fill": "env -u PLAYWRIGHT_BROWSERS_PATH tsx scripts/fill-timesheet.ts",
     "figma-auth": "env -u PLAYWRIGHT_BROWSERS_PATH tsx scripts/figma-auth.ts",
     "capture:journey-map": "env -u PLAYWRIGHT_BROWSERS_PATH tsx scripts/capture-journey-map.ts",
+    "extract:journey-tables": "tsx scripts/extract-journey-tables.ts",
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "devDependencies": {
