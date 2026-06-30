@@ -229,6 +229,79 @@ function seamScoreGray(left: GrayImage, right: GrayImage, overlap: number, dy: n
   return weight > 0 ? total / weight : -1;
 }
 
+/**
+ * First-principles translate placement score.
+ * Left at (0,0), right at (pan, dy): overlap columns [pan..w] vs [0..w-pan],
+ * same row y on left vs row y-dy on right.
+ */
+export async function scoreTranslatePlacement(
+  leftPath: string,
+  rightPath: string,
+  pan: number,
+  dy: number
+): Promise<number> {
+  const left = readFileSync(leftPath);
+  const right = readFileSync(rightPath);
+  const meta = await sharp(left).metadata();
+  const tileWidth = meta.width ?? 1920;
+  const leftF = await loadGray(left, 1);
+  const rightF = await loadGray(right, 1);
+
+  const overlap = tileWidth - pan;
+  if (overlap < 80 || pan < 0) return -1;
+
+  const stripH = Math.max(20, Math.round(leftF.h * 0.07));
+  let total = 0,
+    weight = 0;
+
+  for (let y = 40; y < leftF.h - stripH - 40; y += Math.max(24, Math.round(stripH * 0.7))) {
+    const ry = y - dy;
+    if (ry < 0 || ry + stripH > rightF.h) continue;
+    const a = region(leftF, pan, y, overlap, stripH);
+    const b = region(rightF, 0, ry, overlap, stripH);
+    if (!a || !b) continue;
+    const v = Math.min(variance(a), variance(b));
+    if (v < 50) continue;
+    total += ncc(a, b) * v;
+    weight += v;
+  }
+  return weight > 0 ? total / weight : -1;
+}
+
+export interface MicroSnapResult {
+  pan: number;
+  dy: number;
+  score: number;
+  userScore: number;
+  improved: boolean;
+}
+
+/** Try snap: lock pan, nudge dy only using translate semantics. */
+export async function microSnapTranslate(
+  leftPath: string,
+  rightPath: string,
+  userPan: number,
+  userDy: number,
+  maxDy = 8
+): Promise<MicroSnapResult> {
+  const userScore = await scoreTranslatePlacement(leftPath, rightPath, userPan, userDy);
+  let best = { pan: userPan, dy: userDy, score: userScore };
+
+  for (let d = userDy - maxDy; d <= userDy + maxDy; d++) {
+    const score = await scoreTranslatePlacement(leftPath, rightPath, userPan, d);
+    if (score > best.score) best = { pan: userPan, dy: d, score };
+  }
+
+  const improved = best.score > userScore + 0.002;
+  return {
+    pan: improved ? best.pan : userPan,
+    dy: improved ? best.dy : userDy,
+    score: improved ? best.score : userScore,
+    userScore,
+    improved,
+  };
+}
+
 export async function guessAlignment(
   leftPath: string,
   rightPath: string
@@ -284,6 +357,71 @@ export async function findTwoImageSeam(
   return { overlap: refineO, dy: bestDy, score: dyScore };
 }
 
+/** Refine pan/dy in a window around a manual placement. */
+export async function refineAlignmentNear(
+  leftPath: string,
+  rightPath: string,
+  hintPan: number,
+  hintDy: number,
+  panRadius = 120,
+  dyRadius = 60
+): Promise<{ pan: number; dy: number; score: number }> {
+  const left = readFileSync(leftPath);
+  const right = readFileSync(rightPath);
+  const meta = await sharp(left).metadata();
+  const tileWidth = meta.width ?? 1920;
+  const leftF = await loadGray(left, 1);
+  const rightF = await loadGray(right, 1);
+
+  const minPan = 80;
+  const maxPan = tileWidth - 80;
+  const overlap = tileWidth - hintPan;
+  const seedScore =
+    hintPan >= minPan && hintPan <= maxPan
+      ? seamScoreGray(leftF, rightF, overlap, hintDy)
+      : -1;
+
+  function search(
+    centerPan: number,
+    centerDy: number,
+    rPan: number,
+    rDy: number,
+    step: number,
+    seed: { pan: number; dy: number; score: number }
+  ) {
+    let best = seed;
+    for (let pan = centerPan - rPan; pan <= centerPan + rPan; pan += step) {
+      if (pan < minPan || pan > maxPan) continue;
+      const o = tileWidth - pan;
+      for (let d = centerDy - rDy; d <= centerDy + rDy; d += step) {
+        const score = seamScoreGray(leftF, rightF, o, d);
+        if (score > best.score) best = { pan, dy: d, score };
+      }
+    }
+    return best;
+  }
+
+  const seed = { pan: hintPan, dy: hintDy, score: seedScore };
+  const coarse = search(hintPan, hintDy, panRadius, dyRadius, 8, seed);
+  return search(coarse.pan, coarse.dy, 16, 12, 2, coarse);
+}
+
+/** Full auto snap or refine around current placement. */
+export async function snapAlignment(
+  leftPath: string,
+  rightPath: string,
+  mode: "guess" | "refine",
+  hint?: { pan: number; dy: number }
+): Promise<{ pan: number; dy: number; score: number }> {
+  if (mode === "guess") {
+    const guess = await guessAlignment(leftPath, rightPath);
+    return { pan: guess.pan, dy: guess.dy, score: guess.score };
+  }
+  const pan = hint?.pan ?? 0;
+  const dy = hint?.dy ?? 0;
+  return refineAlignmentNear(leftPath, rightPath, pan, dy);
+}
+
 async function fadeToAlpha(buffer: Buffer, alpha: number): Promise<Buffer> {
   const { data, info } = await sharp(buffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const px = new Uint8Array(data);
@@ -317,23 +455,20 @@ export async function buildAlignPreview(
   }
 
   const alpha = options.alpha ?? 0.45;
-  const topPad = dy < 0 ? -dy : 0;
-  const outWidth = pan + tileWidth;
-  const outHeight = tileHeight + Math.abs(dy);
-
+  const bounds = placementBounds(tileWidth, tileHeight, pan, dy);
   const fadedRight = await fadeToAlpha(right, alpha);
 
   const buffer = await sharp({
     create: {
-      width: outWidth,
-      height: outHeight,
+      width: bounds.width,
+      height: bounds.height,
       channels: 4,
       background: { r: 255, g: 255, b: 255, alpha: 1 },
     },
   })
     .composite([
-      { input: left, left: 0, top: topPad },
-      { input: fadedRight, left: pan, top: topPad + dy },
+      { input: left, left: bounds.leftX, top: bounds.leftY },
+      { input: fadedRight, left: bounds.rightX, top: bounds.rightY },
     ])
     .png()
     .toBuffer();
@@ -343,8 +478,8 @@ export async function buildAlignPreview(
     overlap: tileWidth - pan,
     verticalShift: dy,
     score,
-    width: outWidth,
-    height: outHeight,
+    width: bounds.width,
+    height: bounds.height,
   };
 }
 
@@ -358,6 +493,34 @@ export async function writeAlignPreview(
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, result.buffer);
   return result;
+}
+
+/** Composite with right offset (pan, dy) from left top-left; crop to union bounds. */
+export function placementBounds(
+  tileWidth: number,
+  tileHeight: number,
+  pan: number,
+  dy: number
+): {
+  width: number;
+  height: number;
+  leftX: number;
+  leftY: number;
+  rightX: number;
+  rightY: number;
+} {
+  const x0 = Math.min(0, pan);
+  const y0 = Math.min(0, dy);
+  const x1 = Math.max(tileWidth, pan + tileWidth);
+  const y1 = Math.max(tileHeight, dy + tileHeight);
+  return {
+    width: x1 - x0,
+    height: y1 - y0,
+    leftX: -x0,
+    leftY: -y0,
+    rightX: pan - x0,
+    rightY: dy - y0,
+  };
 }
 
 /** Place full tiles with horizontal pan; right overlays left in the overlap. */
@@ -387,44 +550,31 @@ export async function stitchTwoImages(
   const overlap = tileWidth - pan;
   console.log(`  pan=${pan}px  overlap=${overlap}px  dy=${dy}px`);
 
-  const leftY = Math.max(0, -dy);
-  const rightY = Math.max(0, dy);
-
-  const leftSlice =
-    leftY > 0
-      ? await sharp(left)
-          .extract({ left: 0, top: leftY, width: tileWidth, height: tileHeight - leftY })
-          .toBuffer()
-      : left;
-
-  const rightSlice =
-    rightY > 0
-      ? await sharp(right)
-          .extract({ left: 0, top: rightY, width: tileWidth, height: tileHeight - rightY })
-          .toBuffer()
-      : right;
-
-  const leftSliceH = (await sharp(leftSlice).metadata()).height ?? tileHeight;
-  const rightSliceH = (await sharp(rightSlice).metadata()).height ?? tileHeight;
-  const outWidth = pan + tileWidth;
-  const outHeight = Math.max(leftSliceH, rightSliceH);
+  const bounds = placementBounds(tileWidth, tileHeight, pan, dy);
 
   const buffer = await sharp({
     create: {
-      width: outWidth,
-      height: outHeight,
+      width: bounds.width,
+      height: bounds.height,
       channels: 4,
       background: { r: 255, g: 255, b: 255, alpha: 1 },
     },
   })
     .composite([
-      { input: leftSlice, left: 0, top: 0 },
-      { input: rightSlice, left: pan, top: 0 },
+      { input: left, left: bounds.leftX, top: bounds.leftY },
+      { input: right, left: bounds.rightX, top: bounds.rightY },
     ])
     .png()
     .toBuffer();
 
-  return { buffer, overlap, verticalShift: dy, score, width: outWidth, height: outHeight };
+  return {
+    buffer,
+    overlap,
+    verticalShift: dy,
+    score,
+    width: bounds.width,
+    height: bounds.height,
+  };
 }
 
 export interface WriteStitchOptions {

@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Stitch align</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+        background: #1a1a1a;
+        color: #eee;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        padding: 10px 14px;
+        background: #2a2a2a;
+        border-bottom: 1px solid #444;
+      }
+      header h1 {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0 12px 0 0;
+      }
+      button {
+        background: #3d5a80;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 14px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #4d6f99;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      button.secondary {
+        background: #444;
+      }
+      button.danger {
+        background: #8b3a3a;
+      }
+      .stats {
+        font-size: 12px;
+        color: #aaa;
+        margin-left: auto;
+      }
+      label {
+        font-size: 12px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      #viewport {
+        flex: 1;
+        overflow: auto;
+        position: relative;
+        background: #111
+          repeating-linear-gradient(45deg, #161616 0 10px, #131313 10px 20px);
+      }
+      #stage {
+        position: relative;
+        transform-origin: 0 0;
+      }
+      #left-img {
+        position: absolute;
+        display: block;
+        user-select: none;
+        pointer-events: none;
+        z-index: 1;
+      }
+      #right-wrap {
+        position: absolute;
+        cursor: grab;
+        touch-action: none;
+        z-index: 2;
+      }
+      #right-wrap.dragging {
+        cursor: grabbing;
+      }
+      #right-img {
+        display: block;
+        user-select: none;
+        pointer-events: none;
+        opacity: 0.52;
+      }
+      .hint {
+        font-size: 12px;
+        color: #888;
+        padding: 0 14px 8px;
+      }
+      .snapped #right-img {
+        outline: 2px solid #5cb85c;
+        outline-offset: -2px;
+      }
+      #status {
+        font-size: 12px;
+        padding: 6px 14px;
+        background: #2d2d1a;
+        color: #e6d98a;
+        display: none;
+      }
+      #status.error {
+        background: #3a2222;
+        color: #f0a8a8;
+        display: block;
+      }
+      #status.ok {
+        background: #1e3324;
+        color: #9fd6a8;
+        display: block;
+      }
+      .pan-dy {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-size: 12px;
+      }
+      .pan-dy input[type="number"] {
+        width: 72px;
+        background: #333;
+        border: 1px solid #555;
+        color: #eee;
+        border-radius: 4px;
+        padding: 4px 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Stitch align</h1>
+      <button id="try-snap" type="button">Try snap</button>
+      <button id="undo-snap" class="secondary" type="button" disabled>Undo snap</button>
+      <button id="log-placement" class="secondary" type="button">Log my placement</button>
+      <button id="save-stitch" type="button">Save stitched PNG</button>
+      <div class="pan-dy">
+        <label>pan <input id="pan-input" type="number" step="1" /></label>
+        <label>dy <input id="dy-input" type="number" step="1" /></label>
+      </div>
+      <label>
+        Opacity
+        <input id="opacity" type="range" min="0.15" max="1" step="0.05" value="0.52" />
+      </label>
+      <label>
+        Zoom
+        <input id="zoom" type="range" min="0.25" max="1.5" step="0.05" value="0.55" />
+      </label>
+      <span class="stats" id="stats">pan — dy —</span>
+    </header>
+    <p class="hint">
+      Left image is fixed. Drag the transparent right image freely.
+      <strong>Try snap</strong> locks your pan and nudges dy ±8px only. Save crops to combined extents.
+    </p>
+    <div id="status"></div>
+    <div id="viewport">
+      <div id="stage">
+        <img id="left-img" alt="left capture" />
+        <div id="right-wrap">
+          <img id="right-img" alt="right capture" />
+        </div>
+      </div>
+    </div>
+    <script>
+      const ORIGIN = 300;
+      const ARTBOARD_SCALE = 20;
+
+      const viewport = document.getElementById("viewport");
+      const leftImg = document.getElementById("left-img");
+      const rightWrap = document.getElementById("right-wrap");
+      const rightImg = document.getElementById("right-img");
+      const stats = document.getElementById("stats");
+      const trySnapBtn = document.getElementById("try-snap");
+      const undoSnapBtn = document.getElementById("undo-snap");
+      const logPlacementBtn = document.getElementById("log-placement");
+      const saveBtn = document.getElementById("save-stitch");
+      const opacityInput = document.getElementById("opacity");
+      const zoomInput = document.getElementById("zoom");
+      const panInput = document.getElementById("pan-input");
+      const dyInput = document.getElementById("dy-input");
+      const statusEl = document.getElementById("status");
+      const stage = document.getElementById("stage");
+
+      let meta = { tileWidth: 1920, tileHeight: 1080, logPath: "" };
+      let pan = 0;
+      let dy = 0;
+      const undoStack = [];
+      let dragging = false;
+      let dragStart = { x: 0, y: 0, pan: 0, dy: 0 };
+
+      function updateStats(extra = "") {
+        stats.textContent = `pan ${pan}px · dy ${dy}px${extra ? " · " + extra : ""}`;
+      }
+
+      function showStatus(message, kind = "error") {
+        statusEl.textContent = message;
+        statusEl.className = kind;
+      }
+
+      function clearStatus() {
+        statusEl.className = "";
+        statusEl.textContent = "";
+      }
+
+      function syncInputs() {
+        panInput.value = String(pan);
+        dyInput.value = String(dy);
+      }
+
+      function applyTransform() {
+        const artW = meta.tileWidth * ARTBOARD_SCALE;
+        const artH = meta.tileHeight * ARTBOARD_SCALE;
+
+        stage.style.width = `${artW}px`;
+        stage.style.height = `${artH}px`;
+
+        leftImg.style.left = `${ORIGIN}px`;
+        leftImg.style.top = `${ORIGIN}px`;
+        leftImg.style.clipPath = "none";
+
+        rightWrap.style.left = `${ORIGIN + pan}px`;
+        rightWrap.style.top = `${ORIGIN + dy}px`;
+        rightWrap.style.transform = "none";
+        rightImg.style.clipPath = "none";
+
+        syncInputs();
+        updateStats();
+      }
+
+      function scrollToOrigin() {
+        viewport.scrollLeft = Math.max(0, ORIGIN - 40);
+        viewport.scrollTop = Math.max(0, ORIGIN - 40);
+      }
+
+      function pushUndo() {
+        undoStack.push({ pan, dy });
+        undoSnapBtn.disabled = false;
+      }
+
+      function setPosition(newPan, newDy, { snapped = false, recordUndo = false } = {}) {
+        if (recordUndo) pushUndo();
+        pan = Math.round(newPan);
+        dy = Math.round(newDy);
+        rightWrap.classList.toggle("snapped", snapped);
+        applyTransform();
+      }
+
+      async function apiSnap(mode, source) {
+        const res = await fetch("/api/snap", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode, pan, dy, source }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+      }
+
+      function formatSnapRejection(result) {
+        const sp = result.suggestedPan ?? result.pan;
+        const sd = result.suggestedDy ?? result.dy;
+        const us =
+          result.userScore !== undefined ? ` userScore=${result.userScore.toFixed(4)}` : "";
+        return (
+          `Snap skipped — kept pan ${result.userPan}, dy ${result.userDy}${us}. ` +
+          (result.panLocked ? "Pan locked. " : "") +
+          (result.reason ? `${result.reason}. ` : "") +
+          `Best nearby was pan ${sp}, dy ${sd}. Logged.`
+        );
+      }
+
+      async function trySnap(recordUndo = true) {
+        const before = { pan, dy };
+        trySnapBtn.disabled = true;
+        clearStatus();
+        try {
+          const result = await apiSnap("refine", "try-snap");
+          if (!result.applied) {
+            setPosition(before.pan, before.dy, { snapped: false });
+            showStatus(formatSnapRejection(result), "ok");
+            return;
+          }
+          setPosition(result.pan, result.dy, { snapped: true, recordUndo });
+          showStatus(
+            `Nudged dy ${before.dy}→${result.dy} (score ${result.userScore?.toFixed(3)}→${result.score.toFixed(3)})`,
+            "ok"
+          );
+        } finally {
+          trySnapBtn.disabled = false;
+        }
+      }
+
+      async function logPlacement(note) {
+        await fetch("/api/placement", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pan, dy, source: "user-placement", note }),
+        });
+        showStatus(`Logged your placement: pan ${pan}, dy ${dy}`, "ok");
+      }
+
+      undoSnapBtn.addEventListener("click", () => {
+        const prev = undoStack.pop();
+        if (!prev) return;
+        setPosition(prev.pan, prev.dy, { snapped: false });
+        undoSnapBtn.disabled = undoStack.length === 0;
+      });
+
+      trySnapBtn.addEventListener("click", () => trySnap(true));
+
+      logPlacementBtn.addEventListener("click", () =>
+        logPlacement("user says this is correct")
+      );
+
+      panInput.addEventListener("change", () => {
+        setPosition(Number(panInput.value) || 0, dy);
+        rightWrap.classList.remove("snapped");
+      });
+      dyInput.addEventListener("change", () => {
+        setPosition(pan, Number(dyInput.value) || 0);
+        rightWrap.classList.remove("snapped");
+      });
+
+      saveBtn.addEventListener("click", async () => {
+        saveBtn.disabled = true;
+        try {
+          const res = await fetch("/api/stitch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pan, dy }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || res.statusText);
+          alert(`Saved: ${data.path}\n${data.width}×${data.height}px`);
+        } catch (e) {
+          alert(e.message);
+        } finally {
+          saveBtn.disabled = false;
+        }
+      });
+
+      opacityInput.addEventListener("input", () => {
+        rightImg.style.opacity = opacityInput.value;
+      });
+
+      zoomInput.addEventListener("input", () => {
+        stage.style.transform = `scale(${zoomInput.value})`;
+      });
+
+      rightWrap.addEventListener("pointerdown", (e) => {
+        dragging = true;
+        rightWrap.classList.add("dragging");
+        rightWrap.classList.remove("snapped");
+        clearStatus();
+        dragStart = { x: e.clientX, y: e.clientY, pan, dy };
+        rightWrap.setPointerCapture(e.pointerId);
+      });
+
+      rightWrap.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        const scale = parseFloat(zoomInput.value) || 1;
+        const dx = (e.clientX - dragStart.x) / scale;
+        const dyDelta = (e.clientY - dragStart.y) / scale;
+        pan = Math.round(dragStart.pan + dx);
+        dy = Math.round(dragStart.dy + dyDelta);
+        applyTransform();
+      });
+
+      rightWrap.addEventListener("pointerup", (e) => {
+        if (!dragging) return;
+        dragging = false;
+        rightWrap.classList.remove("dragging");
+        rightWrap.releasePointerCapture(e.pointerId);
+      });
+
+      async function init() {
+        const res = await fetch("/api/meta");
+        meta = await res.json();
+        leftImg.src = "/images/left.png";
+        rightImg.src = "/images/right.png";
+        await Promise.all([
+          leftImg.decode().catch(() => {}),
+          rightImg.decode().catch(() => {}),
+        ]);
+        setPosition(meta.guess?.pan ?? Math.round(meta.tileWidth * 0.35), meta.guess?.dy ?? 0);
+        stage.style.transform = `scale(${zoomInput.value})`;
+        scrollToOrigin();
+      }
+
+      init().catch((e) => alert(e.message));
+    </script>
+  </body>
+</html>

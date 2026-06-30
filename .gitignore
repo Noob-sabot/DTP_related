@@ -9,3 +9,4 @@ exports/dtp-accessibility-journey-maps/*-tiles/
 eng.traineddata
 tests/.tmp-journey-map/
 exports/dtp-accessibility-journey-maps/.go
+exports/dtp-accessibility-journey-maps/**/align-snap-log.jsonl

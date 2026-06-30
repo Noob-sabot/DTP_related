@@ -104,10 +104,11 @@ async function main() {
   console.log(`  Auto guess: pan=${guess.pan}px  dy=${guess.dy}px  (confident=${guess.confident})`);
   console.log(`  ${guess.note}`);
   console.log(
-    "\nTune:\n" +
-      `  npm run stitch:preview -- ${leftPath} ${rightPath} --pan ${guess.pan} --dy ${guess.dy}\n` +
-      "Then commit:\n" +
-      `  npm run stitch:two -- ${leftPath} ${rightPath} stitched-two.png --pan N --dy N`
+    "\nAlign in browser:\n" +
+      `  npm run stitch:align -- ${leftPath} ${rightPath}\n` +
+      "  (drag right image, Try snap / Undo snap, then Save stitched PNG)\n" +
+      "Or CLI tune:\n" +
+      `  npm run stitch:preview -- ${leftPath} ${rightPath} --pan ${guess.pan} --dy ${guess.dy}`
   );
 }
 
