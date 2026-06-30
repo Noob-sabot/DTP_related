@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import sharp from "sharp";
+import { timed } from "./timing.js";
 
 export interface TwoImageSeam {
   overlap: number;
@@ -241,6 +242,7 @@ export async function scoreTranslatePlacement(
   dy: number,
   analysisMaxWidth = 1920
 ): Promise<number> {
+  return timed("align.scoreTranslatePlacement", async () => {
   const left = readFileSync(leftPath);
   const right = readFileSync(rightPath);
   const meta = await sharp(left).metadata();
@@ -270,6 +272,7 @@ export async function scoreTranslatePlacement(
     weight += v;
   }
   return weight > 0 ? total / weight : -1;
+  });
 }
 
 export interface MicroSnapResult {

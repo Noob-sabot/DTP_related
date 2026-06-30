@@ -1,5 +1,6 @@
 import { readFileSync } from "fs";
 import sharp from "sharp";
+import { timed } from "./timing.js";
 
 export interface MapChromeCrop {
   top: number;
@@ -21,6 +22,7 @@ export async function detectMapChromeCropMerged(
   input: string | Buffer,
   opts: { blackThreshold?: number; minDarkRows?: number; darkFraction?: number } = {}
 ): Promise<MapChromeCrop> {
+  return timed("crop.detectMerged", async () => {
   const buf = typeof input === "string" ? readFileSync(input) : input;
   const meta = await sharp(buf).metadata();
   const w = meta.width ?? 1920;
@@ -64,6 +66,7 @@ export async function detectMapChromeCropMerged(
   const bottom = bottomCropFromTop(top);
   const height = Math.max(1, h - top - bottom);
   return { top, bottom, width: w, height };
+  });
 }
 
 /**
@@ -73,6 +76,7 @@ export async function detectMapChromeCrop(
   input: string | Buffer,
   opts: { blackThreshold?: number; minDarkRows?: number } = {}
 ): Promise<MapChromeCrop> {
+  return timed("crop.detectTile", async () => {
   const buf = typeof input === "string" ? readFileSync(input) : input;
   const meta = await sharp(buf).metadata();
   const w = meta.width ?? 1920;
@@ -116,12 +120,15 @@ export async function detectMapChromeCrop(
   const bottom = bottomCropFromTop(top);
   const height = Math.max(1, h - top - bottom);
   return { top, bottom, width: w, height };
+  });
 }
 
 export async function cropMapChrome(input: Buffer, crop?: MapChromeCrop): Promise<Buffer> {
+  return timed("crop.apply", async () => {
   const c = crop ?? (await detectMapChromeCrop(input));
   return sharp(input)
     .extract({ left: 0, top: c.top, width: c.width, height: c.height })
     .png()
     .toBuffer();
+  });
 }

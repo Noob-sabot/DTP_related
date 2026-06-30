@@ -3,6 +3,7 @@ import sharp from "sharp";
 import type { Page } from "@playwright/test";
 import { scoreTranslatePlacement } from "./stitch-two.js";
 import { getCanvasRegion, panCanvas } from "./figjam-capture.js";
+import { timed } from "./timing.js";
 
 export const MAX_ROW_TILES = 15;
 
@@ -22,6 +23,7 @@ export async function findTranslateOffset(
   panRadius = 100,
   dyRadius = 24
 ): Promise<{ pan: number; dy: number; score: number }> {
+  return timed("align.findTranslateOffset", async () => {
   const meta = await sharp(readFileSync(leftPath)).metadata();
   const tileWidth = meta.width ?? 1920;
   const scale = tileWidth > 2400 ? 1920 / tileWidth : 1;
@@ -63,6 +65,7 @@ export async function findTranslateOffset(
     dy: Math.round(best.dy / scale),
     score: best.score,
   };
+  });
 }
 
 async function leftStripMean(imagePath: string, stripWidth = 120): Promise<number> {
@@ -146,21 +149,28 @@ export async function detectRowEnd(
   stepX: number,
   stepDy = 0
 ): Promise<RowEndCheck> {
+  return timed("capture.detectRowEnd", async () => {
   const meta = await sharp(readFileSync(currPath)).metadata();
   const w = meta.width ?? 1920;
   const h = meta.height ?? 1080;
   const overlap = Math.max(80, w - stepX);
   const novelWidth = w - overlap;
 
-  const overlapScore = await scoreTranslatePlacement(prevPath, currPath, stepX, stepDy);
-  const similarity = await fullImageSimilarity(prevPath, currPath);
+  const overlapScore = await timed("capture.detectRowEnd.overlapScore", () =>
+    scoreTranslatePlacement(prevPath, currPath, stepX, stepDy)
+  );
+  const similarity = await timed("capture.detectRowEnd.similarity", () =>
+    fullImageSimilarity(prevPath, currPath)
+  );
 
   let novelMean = 255;
   if (novelWidth > 40) {
-    const stats = await sharp(readFileSync(currPath))
-      .extract({ left: overlap, top: 0, width: novelWidth, height: h })
-      .stats();
-    novelMean = stats.channels[0]?.mean ?? 255;
+    novelMean = await timed("capture.detectRowEnd.novelRegion", async () => {
+      const stats = await sharp(readFileSync(currPath))
+        .extract({ left: overlap, top: 0, width: novelWidth, height: h })
+        .stats();
+      return stats.channels[0]?.mean ?? 255;
+    });
   }
 
   if (novelWidth > 40 && novelMean > 215) {
@@ -210,4 +220,5 @@ export async function detectRowEnd(
     novelMean,
     similarity,
   };
+  });
 }

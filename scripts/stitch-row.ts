@@ -4,6 +4,7 @@ import sharp from "sharp";
 import { loadFigJamConfig, resolveOutputDir } from "./lib/figjam-config.js";
 import { stitchRowTiles } from "./lib/stitch-row.js";
 import { detectMapChromeCropMerged } from "./lib/crop-map-chrome.js";
+import { startTimingSession, timed, finishTiming } from "./lib/timing.js";
 
 function parseArgs(argv: string[]) {
   let outName = "auto-row";
@@ -32,10 +33,14 @@ async function main() {
   const tilesDir = join(outDir, "tiles");
   const metaPath = join(outDir, "capture.json");
 
-  let tilePaths = readdirSync(tilesDir)
-    .filter((f) => /^tile-\d+\.png$/.test(f))
-    .sort()
-    .map((f) => join(tilesDir, f));
+  startTimingSession();
+
+  let tilePaths = await timed("stitch.loadTileList", async () =>
+    readdirSync(tilesDir)
+      .filter((f) => /^tile-\d+\.png$/.test(f))
+      .sort()
+      .map((f) => join(tilesDir, f))
+  );
 
   if (maxTiles != null) tilePaths = tilePaths.slice(0, maxTiles);
 
@@ -73,17 +78,19 @@ async function main() {
     expectedStep: fixedPan,
     cropChrome: false,
   });
-  writeFileSync(stitchedPath, result.buffer);
+  await timed("stitch.writeMerged", async () => writeFileSync(stitchedPath, result.buffer));
   console.log(`\nMerged: ${stitchedPath} (${result.width}×${result.height}px)`);
 
   let output = result;
   if (crop) {
     const chrome = await detectMapChromeCropMerged(result.buffer);
-    const cropped = await sharp(result.buffer)
-      .extract({ left: 0, top: chrome.top, width: chrome.width, height: chrome.height })
-      .png()
-      .toBuffer();
-    writeFileSync(croppedPath, cropped);
+    const cropped = await timed("stitch.crop.apply", async () =>
+      sharp(result.buffer)
+        .extract({ left: 0, top: chrome.top, width: chrome.width, height: chrome.height })
+        .png()
+        .toBuffer()
+    );
+    await timed("stitch.writeCropped", async () => writeFileSync(croppedPath, cropped));
     output = { ...result, buffer: cropped, width: chrome.width, height: chrome.height, crop: chrome };
     console.log(`Cropped: ${croppedPath} (${chrome.width}×${chrome.height}px)`);
     console.log(`  top=${chrome.top}px  bottom=${chrome.bottom}px (bottom = top × 1.2)`);
@@ -96,14 +103,18 @@ async function main() {
     const hqW = Math.round((meta.width ?? result.width) * scale);
     const hqH = Math.round((meta.height ?? result.height) * scale);
     console.log(`\n── HQ preview ${scale}× → ${hqPath} ──`);
-    const hq = await sharp(src)
-      .resize(hqW, hqH, { kernel: sharp.kernel.lanczos3 })
-      .sharpen({ sigma: 0.6, m1: 0.5, m2: 0.25 })
-      .png({ compressionLevel: 1 })
-      .toBuffer();
+    const hq = await timed("stitch.hqUpscale", async () =>
+      sharp(src)
+        .resize(hqW, hqH, { kernel: sharp.kernel.lanczos3 })
+        .sharpen({ sigma: 0.6, m1: 0.5, m2: 0.25 })
+        .png({ compressionLevel: 1 })
+        .toBuffer()
+    );
     writeFileSync(hqPath, hq);
     console.log(`  ${hqPath} (${hqW}×${hqH}px)`);
   }
+
+  finishTiming(join(outDir, "timing-stitch.json"), "stitch-row");
 }
 
 main().catch((err) => {
