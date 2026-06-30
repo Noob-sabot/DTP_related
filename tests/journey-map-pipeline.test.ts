@@ -9,6 +9,10 @@ import {
   resolveMapSearchTerm,
   buildPageCapturePlan,
   mapMatchesSearchTerm,
+  mapSearchQueries,
+  isWrongMapHit,
+  buildMapNavigationPlan,
+  MAP_NAV_PHASES,
 } from "../scripts/lib/journey-map-pipeline.js";
 import { OcrQueue } from "../scripts/lib/ocr-queue.js";
 import { stitchPagesToPdf } from "../scripts/lib/journey-map-pdf.js";
@@ -42,6 +46,25 @@ describe("1 — find the right map", () => {
   it("matches OCR text to the expected map", () => {
     assert.equal(mapMatchesSearchTerm("Metro & Town Bus Journey Stages", "METRO & TOWN BUS"), true);
     assert.equal(mapMatchesSearchTerm("V/LINE COACH timetable", "METRO & TOWN BUS"), false);
+  });
+
+  it("prefers specific search queries to avoid METRO TRAM collisions", () => {
+    assert.deepEqual(mapSearchQueries("METRO & TOWN BUS"), ["& TOWN BUS", "TOWN BUS", "METRO & TOWN BUS"]);
+  });
+
+  it("rejects wrong-map OCR hits while searching", () => {
+    assert.equal(isWrongMapHit("METRO & TOWN BUS", "METRO TRAM Journey Stages"), true);
+    assert.equal(isWrongMapHit("METRO & TOWN BUS", "Metro & Town Bus Journey Steps"), false);
+    assert.equal(isWrongMapHit("METRO & TOWN BUS", ""), false);
+  });
+
+  it("navigation plan zooms out before searching and zooming in", () => {
+    const plan = buildMapNavigationPlan("METRO & TOWN BUS");
+    assert.deepEqual(plan.phases, MAP_NAV_PHASES);
+    assert.equal(plan.phases[0], "overview");
+    assert.equal(plan.phases[1], "search");
+    assert.ok(plan.overviewZoomOutSteps > 0);
+    assert.ok(plan.readableZoomInSteps > 0);
   });
 });
 

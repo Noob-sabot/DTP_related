@@ -57,7 +57,7 @@ async function assertBoardAccessible(page: Page): Promise<void> {
   }
 }
 
-async function dismissFigmaDialogs(page: Page): Promise<void> {
+export async function dismissFigmaDialogs(page: Page): Promise<void> {
   await page.evaluate(() => {
     for (const el of document.querySelectorAll("[class*='banner'], [class*='toast']")) {
       (el as HTMLElement).style.display = "none";
@@ -65,6 +65,9 @@ async function dismissFigmaDialogs(page: Page): Promise<void> {
   }).catch(() => {});
 
   for (const label of [
+    "Allow all cookies",
+    "Reject all",
+    "Accept all",
     "Close",
     "Got it",
     "OK",
@@ -81,6 +84,16 @@ async function dismissFigmaDialogs(page: Page): Promise<void> {
       await page.waitForTimeout(300);
     }
   }
+
+  await page
+    .evaluate(() => {
+      for (const el of document.querySelectorAll(
+        "[class*='cookie'], [class*='Cookie'], [class*='signup'], [class*='banner'], [class*='toast'], [class*='help_widget']"
+      )) {
+        (el as HTMLElement).style.display = "none";
+      }
+    })
+    .catch(() => {});
 }
 
 async function waitForCanvas(page: Page): Promise<void> {

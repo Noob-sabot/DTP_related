@@ -3,12 +3,8 @@ import { mkdirSync, writeFileSync } from "fs";
 import { join } from "path";
 import { loadFigJamConfig, resolveOutputDir, slugify } from "./lib/figjam-config.js";
 import { resolveMapSearchTerm } from "./lib/journey-map-pipeline.js";
-import {
-  capturePageGrid,
-  defaultPagePlan,
-  findMapAndZoomTopLeft,
-  openFigJamBoard,
-} from "./lib/figjam-map-capture.js";
+import { capturePageGrid, defaultPagePlan, openFigJamBoard } from "./lib/figjam-map-capture.js";
+import { waitForGo } from "./lib/wait-for-go.js";
 import { OcrQueue } from "./lib/ocr-queue.js";
 import { buildMapExports, writeValidationSample } from "./lib/journey-map-export.js";
 import { stitchPagesToPdf } from "./lib/journey-map-pdf.js";
@@ -21,7 +17,7 @@ function parseArgs(argv: string[]) {
     name: argv.find((a, i) => argv[i - 1] === "--name"),
     pagesOnly: argv.includes("--pages-only"),
     ocrOnly: argv.includes("--ocr-only"),
-    validateOnly: argv.includes("--validate-only"),
+    auto: argv.includes("--auto"),
   };
 }
 
@@ -30,7 +26,8 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const searchTerm = resolveMapSearchTerm(args.name, config);
   const baseName = slugify(searchTerm);
-  const mapDir = join(resolveOutputDir(config), baseName);
+  const outputRoot = resolveOutputDir(config);
+  const mapDir = join(outputRoot, baseName);
   const pagesDir = join(mapDir, "pages");
   const validationDir = join(mapDir, "validation");
   mkdirSync(pagesDir, { recursive: true });
@@ -38,7 +35,7 @@ async function main() {
   let captured: Awaited<ReturnType<typeof capturePageGrid>> = [];
 
   if (!args.ocrOnly) {
-    console.log(`Finding map and capturing pages: ${searchTerm}`);
+    console.log(`Manual capture: ${searchTerm}`);
     const browser = await chromium.launch({ headless: false });
     const page = await browser.newPage({
       viewport: config.viewport ?? { width: 1920, height: 1080 },
@@ -46,12 +43,22 @@ async function main() {
 
     try {
       await openFigJamBoard(page, config.boardUrl);
-      await findMapAndZoomTopLeft(page, searchTerm);
+
+      if (!args.auto) {
+        await waitForGo({
+          prompt:
+            "Position the map at the top-left corner.\n" +
+            "Type go in this terminal when ready.",
+        });
+      }
+
       const plan = defaultPagePlan(
         config.viewport?.width ?? 1920,
         config.viewport?.height ?? 1080,
         config.tileOverlapPx ?? TILE_OVERLAP
       );
+
+      console.log(`Capturing ${plan.pages.length} pages (pan right, then down)...`);
       captured = await capturePageGrid(page, pagesDir, plan, config.tileOverlapPx ?? TILE_OVERLAP);
       console.log(`  Saved ${captured.length} pages`);
     } finally {
@@ -92,7 +99,7 @@ async function main() {
       ocrResults.push(first);
       console.log(`  Page r${p.row}c${p.col}: ${first.cells.length} cells (verified)`);
     } else {
-      ocrResults.push(await queue.enqueue(p.path, pos));
+      ocrResults.push(queue.enqueue(p.path, pos));
     }
   }
 
@@ -118,6 +125,7 @@ async function main() {
     JSON.stringify(
       {
         mapName: searchTerm,
+        mode: args.auto ? "auto" : "manual",
         pageCount: captured.length,
         validationPages: validation.pages,
         pdf: `${baseName}.pdf`,
@@ -128,7 +136,9 @@ async function main() {
     )
   );
 
-  console.log(`\nDone:\n  ${mapDir}/journey-grid.tsv\n  ${mapDir}/${baseName}.pdf\n  ${validationDir}/ (review first ${VALIDATION_PAGES} pages)`);
+  console.log(
+    `\nDone:\n  ${mapDir}/journey-grid.tsv\n  ${mapDir}/${baseName}.pdf\n  ${validationDir}/ (review first ${VALIDATION_PAGES} pages)`
+  );
 }
 
 main()
