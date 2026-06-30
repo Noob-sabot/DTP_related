@@ -30,7 +30,7 @@ describe("stitchRowTiles", () => {
     const left = join(PILOT, "left.png");
     const right = join(PILOT, "right.png");
     try {
-      const result = await stitchRowTiles([left, right], 1300);
+      const result = await stitchRowTiles([left, right], { expectedStep: 1300 });
       assert.ok(result.width > 2500);
       assert.equal(result.placements.length, 2);
     } catch {

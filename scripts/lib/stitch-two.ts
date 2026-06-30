@@ -238,26 +238,30 @@ export async function scoreTranslatePlacement(
   leftPath: string,
   rightPath: string,
   pan: number,
-  dy: number
+  dy: number,
+  analysisMaxWidth = 1920
 ): Promise<number> {
   const left = readFileSync(leftPath);
   const right = readFileSync(rightPath);
   const meta = await sharp(left).metadata();
   const tileWidth = meta.width ?? 1920;
-  const leftF = await loadGray(left, 1);
-  const rightF = await loadGray(right, 1);
+  const scale = tileWidth > analysisMaxWidth ? analysisMaxWidth / tileWidth : 1;
+  const sPan = Math.round(pan * scale);
+  const sDy = Math.round(dy * scale);
+  const leftF = await loadGray(left, scale);
+  const rightF = await loadGray(right, scale);
 
-  const overlap = tileWidth - pan;
-  if (overlap < 80 || pan < 0) return -1;
+  const overlap = leftF.w - sPan;
+  if (overlap < 40 || sPan < 0) return -1;
 
   const stripH = Math.max(20, Math.round(leftF.h * 0.07));
   let total = 0,
     weight = 0;
 
   for (let y = 40; y < leftF.h - stripH - 40; y += Math.max(24, Math.round(stripH * 0.7))) {
-    const ry = y - dy;
+    const ry = y - sDy;
     if (ry < 0 || ry + stripH > rightF.h) continue;
-    const a = region(leftF, pan, y, overlap, stripH);
+    const a = region(leftF, sPan, y, overlap, stripH);
     const b = region(rightF, 0, ry, overlap, stripH);
     if (!a || !b) continue;
     const v = Math.min(variance(a), variance(b));

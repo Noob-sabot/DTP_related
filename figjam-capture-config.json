@@ -4,6 +4,7 @@
   "viewport": { "width": 1920, "height": 1080 },
   "deviceScaleFactor": 3,
   "tileOverlapPx": 100,
+  "defaultStepPanPx": 1302,
   "panSettleMs": 400,
   "defaultZoom": 200,
   "pilotMapName": "Metro & town bus",

@@ -1,6 +1,8 @@
 import { readFileSync } from "fs";
 import sharp from "sharp";
+import type { Page } from "@playwright/test";
 import { scoreTranslatePlacement } from "./stitch-two.js";
+import { getCanvasRegion, panCanvas } from "./figjam-capture.js";
 
 export const MAX_ROW_TILES = 15;
 
@@ -22,27 +24,82 @@ export async function findTranslateOffset(
 ): Promise<{ pan: number; dy: number; score: number }> {
   const meta = await sharp(readFileSync(leftPath)).metadata();
   const tileWidth = meta.width ?? 1920;
-  const minPan = 80;
-  const maxPan = tileWidth - 80;
+  const scale = tileWidth > 2400 ? 1920 / tileWidth : 1;
+  const sExpected = Math.round(expectedPan * scale);
+  const sPanRadius = Math.max(8, Math.round(panRadius * scale));
+  const sDyRadius = Math.max(4, Math.round(dyRadius * scale));
+  const minPan = Math.round(80 * scale);
+  const maxPan = Math.round((tileWidth - 80) * scale);
 
-  let best = { pan: expectedPan, dy: 0, score: -1 };
-  for (let pan = expectedPan - panRadius; pan <= expectedPan + panRadius; pan += 2) {
+  let best = { pan: sExpected, dy: 0, score: -1 };
+  for (let pan = sExpected - sPanRadius; pan <= sExpected + sPanRadius; pan += 2) {
     if (pan < minPan || pan > maxPan) continue;
-    for (let dy = -dyRadius; dy <= dyRadius; dy += 2) {
-      const score = await scoreTranslatePlacement(leftPath, rightPath, pan, dy);
+    for (let dy = -sDyRadius; dy <= sDyRadius; dy += 2) {
+      const score = await scoreTranslatePlacement(
+        leftPath,
+        rightPath,
+        Math.round(pan / scale),
+        Math.round(dy / scale)
+      );
       if (score > best.score) best = { pan, dy, score };
     }
   }
 
-  // fine pass
   for (let pan = best.pan - 4; pan <= best.pan + 4; pan++) {
     if (pan < minPan || pan > maxPan) continue;
     for (let dy = best.dy - 4; dy <= best.dy + 4; dy++) {
-      const score = await scoreTranslatePlacement(leftPath, rightPath, pan, dy);
+      const score = await scoreTranslatePlacement(
+        leftPath,
+        rightPath,
+        Math.round(pan / scale),
+        Math.round(dy / scale)
+      );
       if (score > best.score) best = { pan, dy, score };
     }
   }
-  return best;
+
+  return {
+    pan: Math.round(best.pan / scale),
+    dy: Math.round(best.dy / scale),
+    score: best.score,
+  };
+}
+
+async function leftStripMean(imagePath: string, stripWidth = 120): Promise<number> {
+  const meta = await sharp(readFileSync(imagePath)).metadata();
+  const w = meta.width ?? 1920;
+  const h = meta.height ?? 1080;
+  const stats = await sharp(readFileSync(imagePath))
+    .extract({ left: 0, top: 0, width: Math.min(stripWidth, w), height: h })
+    .stats();
+  return stats.channels[0]?.mean ?? 255;
+}
+
+/** Pan left until the viewport hits the map's left edge, then nudge back one step if overshot. */
+export async function seekMapLeftEdge(
+  page: Page,
+  stepX: number,
+  settleMs: number,
+  captureTo: (path: string) => Promise<void>,
+  tmpPath: string,
+  maxPans = 14
+): Promise<void> {
+  const region = await getCanvasRegion(page);
+  let overshot = false;
+  for (let i = 0; i < maxPans; i++) {
+    await captureTo(tmpPath);
+    const mean = await leftStripMean(tmpPath);
+    if (mean > 242) {
+      overshot = i > 0;
+      break;
+    }
+    await panCanvas(page, region, -stepX, 0);
+    await page.waitForTimeout(settleMs);
+  }
+  if (overshot) {
+    await panCanvas(page, region, stepX, 0);
+    await page.waitForTimeout(settleMs);
+  }
 }
 
 async function fullImageSimilarity(pathA: string, pathB: string): Promise<number> {
@@ -86,7 +143,8 @@ async function fullImageSimilarity(pathA: string, pathB: string): Promise<number
 export async function detectRowEnd(
   prevPath: string,
   currPath: string,
-  stepX: number
+  stepX: number,
+  stepDy = 0
 ): Promise<RowEndCheck> {
   const meta = await sharp(readFileSync(currPath)).metadata();
   const w = meta.width ?? 1920;
@@ -94,7 +152,7 @@ export async function detectRowEnd(
   const overlap = Math.max(80, w - stepX);
   const novelWidth = w - overlap;
 
-  const overlapScore = await scoreTranslatePlacement(prevPath, currPath, stepX, 0);
+  const overlapScore = await scoreTranslatePlacement(prevPath, currPath, stepX, stepDy);
   const similarity = await fullImageSimilarity(prevPath, currPath);
 
   let novelMean = 255;
@@ -105,20 +163,30 @@ export async function detectRowEnd(
     novelMean = stats.channels[0]?.mean ?? 255;
   }
 
-  if (similarity > 0.965) {
+  if (novelWidth > 40 && novelMean > 215) {
     return {
       stop: true,
-      reason: `tiles ${(similarity * 100).toFixed(1)}% similar after pan — no new content`,
+      reason: `novel region mostly blank (mean grey ${novelMean.toFixed(0)})`,
       overlapScore,
       novelMean,
       similarity,
     };
   }
 
-  if (novelWidth > 40 && novelMean > 247) {
+  if (similarity < 0.55 && novelMean > 200) {
     return {
       stop: true,
-      reason: `novel region mostly blank (mean grey ${novelMean.toFixed(0)})`,
+      reason: `past map edge (sim=${(similarity * 100).toFixed(0)}%, novel grey ${novelMean.toFixed(0)})`,
+      overlapScore,
+      novelMean,
+      similarity,
+    };
+  }
+
+  if (similarity > 0.965 && novelMean > 240) {
+    return {
+      stop: true,
+      reason: `tiles ${(similarity * 100).toFixed(1)}% similar, novel region blank`,
       overlapScore,
       novelMean,
       similarity,

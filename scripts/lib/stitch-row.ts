@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import sharp from "sharp";
 import { findTranslateOffset } from "./capture-row.js";
+import { cropMapChrome, detectMapChromeCrop, detectMapChromeCropMerged, type MapChromeCrop } from "./crop-map-chrome.js";
 
 export interface TilePlacement {
   path: string;
@@ -10,47 +11,73 @@ export interface TilePlacement {
   score: number;
 }
 
+export interface StitchRowOptions {
+  expectedStep?: number;
+  fixedPan?: number;
+  fixedDy?: number;
+  cropChrome?: boolean;
+}
+
 export interface StitchRowResult {
   buffer: Buffer;
   width: number;
   height: number;
   placements: TilePlacement[];
+  crop?: MapChromeCrop;
 }
 
 /** Stitch a horizontal row using translate offsets between consecutive tiles. */
 export async function stitchRowTiles(
   tilePaths: string[],
-  expectedStep?: number
+  options: StitchRowOptions = {}
 ): Promise<StitchRowResult> {
   if (tilePaths.length === 0) throw new Error("No tiles to stitch");
   if (tilePaths.length === 1) {
     const buf = readFileSync(tilePaths[0]);
-    const meta = await sharp(buf).metadata();
+    let crop: MapChromeCrop | undefined;
+    let out = buf;
+    if (options.cropChrome !== false) {
+      crop = await detectMapChromeCrop(buf);
+      out = await cropMapChrome(buf, crop);
+    }
+    const meta = await sharp(out).metadata();
     return {
-      buffer: buf,
+      buffer: out,
       width: meta.width ?? 1920,
       height: meta.height ?? 1080,
       placements: [{ path: tilePaths[0], pan: 0, dy: 0, score: 1 }],
+      crop,
     };
   }
 
   const meta0 = await sharp(readFileSync(tilePaths[0])).metadata();
   const tileWidth = meta0.width ?? 1920;
   const tileHeight = meta0.height ?? 1080;
-  const step = expectedStep ?? Math.round(tileWidth * 0.68);
+  const step = options.expectedStep ?? Math.round(tileWidth * 0.68);
 
   const placements: TilePlacement[] = [{ path: tilePaths[0], pan: 0, dy: 0, score: 1 }];
   let absPan = 0;
   let absDy = 0;
 
-  for (let i = 1; i < tilePaths.length; i++) {
-    const rel = await findTranslateOffset(tilePaths[i - 1], tilePaths[i], step);
-    absPan += rel.pan;
-    absDy += rel.dy;
-    placements.push({ path: tilePaths[i], pan: absPan, dy: absDy, score: rel.score });
-    console.log(
-      `  tile ${i}: +pan ${rel.pan}px +dy ${rel.dy}px (score ${rel.score.toFixed(3)}) → abs pan ${absPan} dy ${absDy}`
-    );
+  if (options.fixedPan != null) {
+    const pan = options.fixedPan;
+    const dy = options.fixedDy ?? 0;
+    for (let i = 1; i < tilePaths.length; i++) {
+      absPan += pan;
+      absDy += dy;
+      placements.push({ path: tilePaths[i], pan: absPan, dy: absDy, score: 1 });
+    }
+    console.log(`  fixed alignment: +pan ${pan}px +dy ${dy}px per tile`);
+  } else {
+    for (let i = 1; i < tilePaths.length; i++) {
+      const rel = await findTranslateOffset(tilePaths[i - 1], tilePaths[i], step);
+      absPan += rel.pan;
+      absDy += rel.dy;
+      placements.push({ path: tilePaths[i], pan: absPan, dy: absDy, score: rel.score });
+      console.log(
+        `  tile ${i}: +pan ${rel.pan}px +dy ${rel.dy}px (score ${rel.score.toFixed(3)}) → abs pan ${absPan} dy ${absDy}`
+      );
+    }
   }
 
   let minX = 0;
@@ -72,7 +99,7 @@ export async function stitchRowTiles(
     top: p.dy - minY,
   }));
 
-  const buffer = await sharp({
+  let buffer = await sharp({
     create: {
       width: outW,
       height: outH,
@@ -84,15 +111,33 @@ export async function stitchRowTiles(
     .png()
     .toBuffer();
 
-  return { buffer, width: outW, height: outH, placements };
+  let crop: MapChromeCrop | undefined;
+  if (options.cropChrome !== false) {
+    crop = await detectMapChromeCropMerged(buffer);
+    buffer = await sharp(buffer)
+      .extract({ left: 0, top: crop.top, width: crop.width, height: crop.height })
+      .png()
+      .toBuffer();
+    console.log(`  cropped chrome: top=${crop.top}px bottom=${crop.bottom}px → ${crop.width}×${crop.height}`);
+  }
+
+  return {
+    buffer,
+    width: crop?.width ?? outW,
+    height: crop?.height ?? outH,
+    placements,
+    crop,
+  };
 }
 
 export async function writeStitchRow(
   tilePaths: string[],
   outPath: string,
-  expectedStep?: number
+  options: StitchRowOptions | number = {}
 ): Promise<StitchRowResult> {
-  const result = await stitchRowTiles(tilePaths, expectedStep);
+  const opts: StitchRowOptions =
+    typeof options === "number" ? { expectedStep: options } : options;
+  const result = await stitchRowTiles(tilePaths, opts);
   mkdirSync(dirname(outPath), { recursive: true });
   writeFileSync(outPath, result.buffer);
   return result;

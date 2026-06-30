@@ -10,6 +10,7 @@ export interface FigJamCaptureConfig {
   viewport: { width: number; height: number };
   deviceScaleFactor: number;
   tileOverlapPx: number;
+  defaultStepPanPx?: number;
   panSettleMs: number;
   defaultZoom: number;
   pilotMapName: string;

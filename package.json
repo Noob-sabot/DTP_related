@@ -12,6 +12,7 @@
     "capture:ocr": "tsx scripts/capture-map-ocr.ts",
     "capture:two": "tsx scripts/capture-two.ts",
     "capture:row": "tsx scripts/capture-row.ts",
+    "stitch:row": "tsx scripts/stitch-row.ts",
     "stitch:two": "tsx scripts/stitch-two.ts",
     "stitch:preview": "tsx scripts/stitch-preview.ts",
     "stitch:align": "tsx scripts/stitch-align-ui.ts",
